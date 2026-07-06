@@ -1,50 +1,61 @@
 # prefect/flows/kafka_to_delta.py
-from prefect import flow, task
-from kafka import KafkaConsumer
-import json, os
-import pandas as pd
+from __future__ import annotations
+
+import json
+import os
+import time
 from datetime import datetime
+from pathlib import Path
 
-@task
-def consume_and_process():
-    """Consume data from Kafka topic"""
+import pandas as pd
+from kafka import KafkaConsumer
+from prefect import flow, task
+
+
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "data.raw")
+DELTA_LAKE_PATH = Path(os.getenv("DELTA_LAKE_PATH", "/opt/delta-lake/raw"))
+
+
+@task(retries=3, retry_delay_seconds=5)
+def consume_and_process() -> list[dict]:
     consumer = KafkaConsumer(
-        "data.raw",
-        bootstrap_servers="kafka:9092",
+        KAFKA_TOPIC,
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
         auto_offset_reset="earliest",
+        enable_auto_commit=True,
+        group_id=f"lab28-prefect-{int(time.time())}",
         consumer_timeout_ms=5000,
-        value_deserializer=lambda m: json.loads(m.decode())
+        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
     )
-    records = []
-    for msg in consumer:
-        records.append(msg.value)
-
-    print(f"Consumed {len(records)} records from Kafka")
+    records = [msg.value for msg in consumer]
+    print(f"Consumed {len(records)} records from Kafka topic {KAFKA_TOPIC}")
     return records
 
+
 @task
-def save_to_delta(records):
-    """Save records to Delta Lake (parquet format)"""
+def save_to_delta(records: list[dict]) -> str | None:
     if not records:
         print("No records to save")
-        return
-    
-    df = pd.DataFrame(records)
-    # Giả lập Delta Lake bằng parquet (local volume)
-    path = "/opt/delta-lake/raw"
-    os.makedirs(path, exist_ok=True)
-    df.to_parquet(f"{path}/batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet")
-    print(f"Saved {len(df)} records to Delta Lake")
+        return None
 
-@flow(name="Kafka to Delta Pipeline", schedule="* */5 * * *")
-def kafka_to_delta_flow():
-    """Main flow: consume from Kafka and save to Delta Lake"""
+    DELTA_LAKE_PATH.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(records)
+    output_path = DELTA_LAKE_PATH / f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
+    df.to_parquet(output_path, index=False)
+    print(f"Saved {len(df)} records to Delta Lake path {output_path}")
+    return str(output_path)
+
+
+@flow(name="Kafka to Delta Pipeline")
+def kafka_to_delta_flow() -> str | None:
     records = consume_and_process()
-    save_to_delta(records)
+    return save_to_delta(records)
+
 
 if __name__ == "__main__":
-    # Deploy flow to Prefect Orion
-    kafka_to_delta_flow.deploy(
-        name="kafka-to-delta",
-        work_queue_name="lab28-worker"
-    )
+    mode = os.getenv("PREFECT_MODE", "run")
+    if mode == "serve":
+        kafka_to_delta_flow.serve(name="kafka-to-delta", interval=300)
+    else:
+        kafka_to_delta_flow()
