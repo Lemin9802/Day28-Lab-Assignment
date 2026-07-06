@@ -1,0 +1,110 @@
+name: lab28
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on: [zookeeper]
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on: [kafka]
+    command: >
+      bash -lc "sleep 15 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic data.raw --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic data.processed --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic model.events --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --list"
+
+  prefect-orion:
+    image: prefecthq/prefect:2.14.0-python3.10
+    command: prefect server start --host 0.0.0.0
+    ports:
+      - "4200:4200"
+    volumes:
+      - prefect_data:/root/.prefect
+
+  prefect-worker:
+    image: prefecthq/prefect:2.14.0-python3.10
+    command: >
+      sh -c "pip install -q kafka-python pandas pyarrow &&
+      prefect work-pool create --type process lab28-worker 2>/dev/null || true &&
+      prefect worker start -p lab28-worker -n lab28-worker"
+    environment:
+      PREFECT_API_URL: http://prefect-orion:4200/api
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DELTA_LAKE_PATH: /opt/delta-lake/raw
+    volumes:
+      - ./prefect/flows:/opt/prefect/flows
+      - ./delta-lake:/opt/delta-lake
+    depends_on: [prefect-orion, kafka-init]
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      VLLM_TUNNEL_URL: ${VLLM_TUNNEL_URL:-${VLLM_NGROK_URL:-}}
+      VLLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-1.2}
+      ENABLE_LLM_FALLBACK: ${ENABLE_LLM_FALLBACK:-true}
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
+      LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-lab28-platform}
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-true}
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-true}
+    depends_on: [qdrant, redis]
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on: [api-gateway]
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on: [prometheus]
+
+volumes:
+  prefect_data:
+  qdrant_data:
