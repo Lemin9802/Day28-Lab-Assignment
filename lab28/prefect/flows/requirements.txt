@@ -1,0 +1,4 @@
+prefect
+kafka-python
+pandas
+pyarrow
