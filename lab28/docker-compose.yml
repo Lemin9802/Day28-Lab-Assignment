@@ -76,7 +76,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      VLLM_TUNNEL_URL: ${VLLM_TUNNEL_URL:-${VLLM_NGROK_URL:-}}
+      VLLM_TUNNEL_URL: ${VLLM_TUNNEL_URL:-}
+      VLLM_URL: ${VLLM_NGROK_URL:-}
       VLLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-1.2}
       ENABLE_LLM_FALLBACK: ${ENABLE_LLM_FALLBACK:-true}
