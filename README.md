@@ -26,7 +26,8 @@ Local Docker Compose:
 
 Kaggle GPU:
   vLLM OpenAI-compatible server
-  cloudflared public tunnel
+  Embedding service
+  cloudflared public tunnels
 ```
 
 ## 10 integration points
@@ -48,7 +49,7 @@ Kaggle GPU:
 
 ```bash
 cp .env.example .env
-# fill VLLM_TUNNEL_URL and LANGCHAIN_API_KEY in .env when available
+# fill VLLM_TUNNEL_URL, EMBED_TUNNEL_URL, and LANGCHAIN_API_KEY when available
 
 docker compose up -d --build
 docker compose ps
@@ -63,56 +64,42 @@ Open:
 - Prometheus: http://localhost:9090
 - Grafana: http://localhost:3000, login `admin/admin`
 
-## Kaggle vLLM with cloudflared single GPU
+## The 3 values you fill in `.env`
 
-Run this in a Kaggle notebook with GPU enabled.
+| `.env` name | Get it from | What it does |
+|---|---|---|
+| `VLLM_TUNNEL_URL` | Kaggle cloudflared tunnel for vLLM on port 8001 | API Gateway calls real LLM inference |
+| `EMBED_TUNNEL_URL` | Kaggle cloudflared tunnel for embedding API on port 8002 | Qdrant script creates real embeddings |
+| `LANGCHAIN_API_KEY` | LangSmith Settings -> API Keys | Sends traces to LangSmith |
 
-```python
-!pip install -q vllm fastapi uvicorn cloudflared mlflow sentence-transformers
+Detailed step-by-step setup is in [`KAGGLE_SETUP.md`](KAGGLE_SETUP.md).
 
-import subprocess, threading, time
-
-MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4"
-
-def run_vllm():
-    subprocess.run([
-        "python", "-m", "vllm.entrypoints.openai.api_server",
-        "--model", MODEL_NAME,
-        "--port", "8001",
-        "--max-model-len", "4096",
-        "--gpu-memory-utilization", "0.5",
-    ])
-
-threading.Thread(target=run_vllm, daemon=True).start()
-time.sleep(60)
-print("vLLM server started")
-```
-
-Then open the tunnel:
-
-```python
-import subprocess, re, time
-proc = subprocess.Popen(
-    ["cloudflared", "tunnel", "--url", "http://localhost:8001"],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,
-)
-for line in proc.stdout:
-    print(line, end="")
-    if "trycloudflare.com" in line:
-        print("Copy the https://xxxxx.trycloudflare.com URL into local .env as VLLM_TUNNEL_URL")
-```
-
-In local `.env`:
+Safe defaults:
 
 ```env
-VLLM_TUNNEL_URL=https://xxxxx.trycloudflare.com
 LLM_TIMEOUT_SECONDS=1.2
 ENABLE_LLM_FALLBACK=true
 ```
 
-For live demo, you can increase `LLM_TIMEOUT_SECONDS=20`. For smoke tests, keep it low so fallback can protect latency.
+For smoke tests, fallback protects latency. For live demo with real model output, use `LLM_TIMEOUT_SECONDS=20`.
+
+## Kaggle vLLM and embedding services
+
+Use [`KAGGLE_SETUP.md`](KAGGLE_SETUP.md) to start both services:
+
+```txt
+Kaggle port 8001 -> cloudflared URL -> VLLM_TUNNEL_URL
+Kaggle port 8002 -> cloudflared URL -> EMBED_TUNNEL_URL
+```
+
+Example local `.env` after Kaggle prints both URLs:
+
+```env
+VLLM_TUNNEL_URL=https://your-vllm-url.trycloudflare.com
+EMBED_TUNNEL_URL=https://your-embed-url.trycloudflare.com
+```
+
+If `EMBED_TUNNEL_URL` is empty, `scripts/05_embed_to_qdrant.py` uses local deterministic embeddings, so smoke tests still work.
 
 ## LangSmith key
 
