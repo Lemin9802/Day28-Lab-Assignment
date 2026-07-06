@@ -10,7 +10,6 @@ redis
 qdrant-client
 requests
 pytest
-prefect==2.14.0
 mlflow
 langsmith
 numpy
