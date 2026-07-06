@@ -5,10 +5,23 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable
 
 import pandas as pd
 from kafka import KafkaConsumer
-from prefect import flow, task
+
+try:
+    from prefect import flow, task
+except Exception:
+    def task(*_args: Any, **_kwargs: Any):
+        def decorator(func: Callable):
+            return func
+        return decorator
+
+    def flow(*_args: Any, **_kwargs: Any):
+        def decorator(func: Callable):
+            return func
+        return decorator
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "data.raw")
@@ -49,7 +62,7 @@ def kafka_to_delta_flow() -> str | None:
 
 
 if __name__ == "__main__":
-    if os.getenv("PREFECT_MODE", "run") == "serve":
+    if os.getenv("PREFECT_MODE", "run") == "serve" and hasattr(kafka_to_delta_flow, "serve"):
         kafka_to_delta_flow.serve(name="kafka-to-delta", interval=300)
     else:
         kafka_to_delta_flow()
