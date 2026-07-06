@@ -3,9 +3,7 @@
 **Sinh viên:** Thái Thị Yến Nhi  
 **MSSV:** `2A202600783`
 
-README tổng để giáo viên chấm nhanh: output, hình demo, log, kiến trúc, Day16-Day27 lineage và 5 câu hỏi nộp bài.
-
-## Output cần chấm
+## Output
 
 | Mục | Link | Kết quả |
 |---|---|---|
